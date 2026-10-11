@@ -18,7 +18,8 @@ from mongoengine import Q
 from inginious.frontend.pages.utils import INGIniousPage
 from inginious.frontend.flask.mail import mail
 from inginious.frontend.user_manager import UserManager
-from inginious.frontend.models import User
+from inginious.frontend.models import User, AccountDeletion
+from inginious.frontend.models.account_deletion import TERMINAL_STATUSES
 
 
 class RegistrationPage(INGIniousPage):
@@ -84,12 +85,19 @@ class RegistrationPage(INGIniousPage):
 
         if not error:
             existing_user = User.objects(Q(username=data["username"]) | Q(email=email)).first()
+            active_deletion = AccountDeletion.objects(
+                Q(username=data["username"]) | Q(email=email),
+                status__nin=TERMINAL_STATUSES).first()
             if existing_user is not None:
                 error = True
                 if existing_user["username"] == data["username"]:
                     msg = _("This username is already taken !")
                 else:
                     msg = _("This email address is already in use !")
+            elif active_deletion is not None:
+                # The username/email is frozen by a deletion in progress
+                error = True
+                msg = _("This username is already taken !")
             else:
                 passwd_hash = UserManager.hash_password(data["passwd"])
                 activate_hash = UserManager.hash_password_sha512(str(random.getrandbits(256)))

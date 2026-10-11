@@ -22,10 +22,15 @@ from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError
 from mongoengine import Q
 
-from inginious.frontend.models import User, Group, Audience, CourseClass, UserTask, Submission
+from inginious.frontend.models import User, Group, Audience, CourseClass, UserTask, Submission, AccountDeletion
+from inginious.frontend.models.account_deletion import TERMINAL_STATUSES as TERMINAL_DELETION_STATUSES
 
 class AuthInvalidInputException(Exception):
     pass
+
+
+class AccountSealedError(Exception):
+    """ Raised when a connection is attempted on a sealed (deletion in progress) account. """
 
 
 class AuthInvalidMethodException(Exception):
@@ -80,6 +85,36 @@ class UserManager:
         self._superadmins = superadmins
         self._auth_methods = OrderedDict()
         self._logger = logging.getLogger("inginious.webapp.users")
+        self._deletion_manager = None
+
+    @property
+    def deletion_manager(self):
+        """ The staged account-deletion engine (lazily instantiated). """
+        if self._deletion_manager is None:
+            from inginious.frontend.account_deletion import AccountDeletionManager
+            from inginious.frontend.plugins import plugin_manager
+            self._deletion_manager = AccountDeletionManager(self, plugin_manager)
+        return self._deletion_manager
+
+    def set_deletion_manager(self, deletion_manager):
+        self._deletion_manager = deletion_manager
+        if deletion_manager is not None:
+            deletion_manager.set_user_manager(self)
+
+    def is_user_under_deletion(self, username):
+        """ True while the user document carries an active deletion seal. """
+        if not username:
+            return False
+        return User.objects(username=username, sealed=True).only("id").first() is not None
+
+    def filter_available_usernames(self, usernames):
+        """ Drops usernames whose account is sealed for deletion from a list. """
+        usernames = list(usernames)
+        if not usernames:
+            return []
+        sealed = User.objects(username__in=usernames, sealed=True).scalar("username")
+        sealed = set(sealed)
+        return [u for u in usernames if u not in sealed]
 
     @classmethod
     def sanitize_email(cls, email: str) -> str:
@@ -129,7 +164,7 @@ class UserManager:
         :param do_connect: indicates if the user must be connected after authentification, True by default
         :return: Returns a User model, or None if the authentication was not successful
         """
-        user = User.objects(username=username, activate__exists=False).first()
+        user = User.objects(username=username, activate__exists=False, sealed__ne=True).first()
 
         if not user or not user.password:
             return None
@@ -181,8 +216,13 @@ class UserManager:
         if not all(key in user for key in ["realname", "email", "username"]):
             raise AuthInvalidInputException()
 
-        User.objects(email=user["email"]).update(realname=user["realname"], username=user["username"],
-                                                 language=user.language)
+        if getattr(user, "sealed", False):
+            self._logger.warning("Connection refused for sealed user %s", user["username"])
+            raise AccountSealedError("This account is being deleted")
+
+        User.objects(email=user["email"], sealed__ne=True).update(realname=user["realname"],
+                                                                  username=user["username"],
+                                                                  language=user.language)
 
         ip = flask.request.remote_addr
 
@@ -257,8 +297,11 @@ class UserManager:
         :param create: Create the API key if none exists yet
         :return: the API key assigned to the user, or None if none exists and create is False.
         """
-        retval = User.objects.get(username=username)
+        retval = User.objects(username=username).first()
         if not retval:
+            return None
+        elif getattr(retval, "sealed", False):
+            # Credentials are frozen during an account deletion: never mint a new key
             return None
         elif "apikey" not in retval and create:
             retval.apikey = self.generate_api_key()
@@ -294,7 +337,10 @@ class UserManager:
         user_profile = User.objects(**{"bindings__" + auth_id: username}).first()
 
         if user_profile and not session.loggedin:
-            # Sign in
+            # Sign in, unless the account is frozen for deletion
+            if getattr(user_profile, "sealed", False):
+                self._logger.warning("Binding sign-in refused for sealed user %s", user_profile.username)
+                return False
             self.connect_user(user_profile)
         elif user_profile and session.email == user_profile.email:
             # Logged in, refresh fields if found profile email matches session email
@@ -313,6 +359,11 @@ class UserManager:
             if User.objects(email=email).first():
                 # Found an email, existing user account, abort without binding
                 self._logger.exception("The binding email is already used by another account!")
+                return False
+            elif AccountDeletion.objects(email=email,
+                                         status__nin=TERMINAL_DELETION_STATUSES).first() is not None:
+                # An active deletion freezes this email identity; do not recreate it
+                self._logger.warning("Binding account creation refused: deletion in progress for %s", email)
                 return False
             else:
                 # New user, create an account using email address
@@ -344,24 +395,38 @@ class UserManager:
             msg = _("You must set a password before removing all bindings.")
         return error, msg
 
-    def delete_user(self, username, confirmation_email=None):
+    def delete_user(self, username, confirmation_email=None, mode=None):
         """
-        Delete a user based on username
+        Start (and process) the staged deletion of a user account.
+
+        A stable deletion record is created first, credentials are sealed, then
+        every cleanup stage runs idempotently. The returned AccountDeletion
+        document (or None if the deletion could not start) is the observable,
+        resumable state of the deletion.
+
         :param username: the username of the user
-        :param confirmation_email: An email to confirm suppression. May be None
-        :return a boolean if a user was deleted
+        :param confirmation_email: an email to confirm self-deletion. May be None
+        :param mode: "erase" (default) or "anonymize" (keep de-identified grades)
+        :return: an AccountDeletion document, or None if nothing was initiated
         """
-        query = {"username": username, "email": confirmation_email} \
-            if confirmation_email is not None else {"username": username}
-        result = User.objects(**query).modify(remove=True)
-        if not result:
-            return False
-        else:
-            Submission.objects(username=username).delete()
-            UserTask.objects(username=username).delete()
-            user_courses = CourseClass.objects(students=username)
-            for elem in user_courses: self.course_unregister_user(elem.id, username)
-        return True
+        if mode is None:
+            try:
+                mode = flask.current_app.config.get("DELETION_RETENTION", "erase")
+            except RuntimeError:
+                mode = "erase"
+
+        try:
+            try:
+                requested_by = session.username or "self"
+            except Exception:
+                requested_by = "system"
+            deletion = self.deletion_manager.initiate(
+                username, requested_by=requested_by,
+                confirmation_email=confirmation_email, mode=mode)
+        except Exception:
+            self._logger.exception("Cannot initiate deletion of user %s", username)
+            return None
+        return self.deletion_manager.process(deletion.id)
 
     def create_user(self, values):
         """
@@ -371,6 +436,11 @@ class UserManager:
         """
         query = Q(username=values["username"]) | Q(email=values["email"])
         if User.objects(query).first() is not None:
+            return _("User could not be created.")
+        if AccountDeletion.objects(Q(username=values["username"]) | Q(email=values["email"]),
+                                   status__nin=TERMINAL_DELETION_STATUSES).first() is not None:
+            # An active deletion freezes the username/email; reuse is refused until
+            # the old identity has been fully removed.
             return _("User could not be created.")
 
         User(username=values["username"], realname=values["realname"], email=values["email"],
@@ -519,6 +589,10 @@ class UserManager:
 
     def update_user_stats(self, username, task, submission, result_str, grade, state, newsub, task_dispenser):
         """ Update stats with a new submission """
+        if self.is_user_under_deletion(username):
+            # A grading job that was in flight when the account was sealed must
+            # not recreate the per-task cache that cleanup is removing.
+            return
         self.user_saw_task(username, submission["courseid"], submission["taskid"])
 
         eval_mode = task_dispenser.get_evaluation_mode(task.get_id())
@@ -655,6 +729,10 @@ class UserManager:
             return False
         user_info = self.get_user_info(username)
         if not user_info:
+            return False
+        if getattr(user_info, "sealed", False):
+            # A sealed account must not be re-attached to a course, including via
+            # LTI auto-registration or teacher batch operations.
             return False
 
         if not force:

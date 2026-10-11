@@ -50,6 +50,12 @@ superadmins:
 # Disable INGInious?
 maintenance: false
 
+# Account deletion retention policy:
+# - "erase" (default): remove all user data
+# - "anonymize": keep historical grades, but de-identify them so they can no
+#   longer be joined to a login identity
+deletion_retention: erase
+
 # Email info
 smtp:
     sendername: 'INGInious <no-reply@inginious.org>'

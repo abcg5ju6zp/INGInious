@@ -1,0 +1,117 @@
+{# This file is part of INGInious. See the LICENSE and the COPYRIGHTS files for #}
+{# more information about the licensing of this file. #}
+
+{% extends "layout.html" %}
+{% block title %}{{ _("Account deletions") }}{% endblock %}
+{% block column %}
+    {% for entry in plugin_manager.call_hook('main_menu') %}
+        {{ entry }}
+    {% endfor %}
+{% endblock %}
+{% block navbar %}
+    <nav aria-label="breadcrumb">
+        <ol class="breadcrumb">
+            <li class="breadcrumb-item"><a href="users"><i class="fa fa-th-list fa-fw"></i> {{ _("Users Admin") }}</a></li>
+            <li class="breadcrumb-item active">{{ _("Account deletions") }}<span class="sr-only">{{ _("(current)") }}</span></li>
+        </ol>
+    </nav>
+{% endblock %}
+{% block content %}
+
+<h2>{{ _("Account deletions") }}</h2>
+<p class="text-muted">{{ _("Each deletion is a stable, resumable record. Failed stages can be retried independently; a deletion can be cancelled only before its irreversible boundary.") }}</p>
+
+{% if not deletions %}
+    <p>{{ _("No account deletion record.") }}</p>
+{% else %}
+<div class="accordion" id="deletions_accordion">
+{% for deletion in deletions %}
+    <div class="card">
+        <div class="card-header d-flex justify-content-between align-items-center" id="heading_{{ deletion.id }}">
+            <div>
+                <strong>{{ deletion.username }}</strong>
+                <span class="text-muted">({{ deletion.email }})</span>
+                <span class="badge badge-secondary ml-2">{{ _(deletion.mode) }}</span>
+                {% if deletion.status == "completed" %}
+                    <span class="badge badge-success">{{ _("completed") }}</span>
+                {% elif deletion.status == "cancelled" %}
+                    <span class="badge badge-secondary">{{ _("cancelled") }}</span>
+                {% elif deletion.status == "sealed" %}
+                    <span class="badge badge-warning">{{ _("sealed") }}</span>
+                {% elif "failed" in deletion.status %}
+                    <span class="badge badge-danger">{{ _(deletion.status) }}</span>
+                {% else %}
+                    <span class="badge badge-info">{{ _(deletion.status) }}</span>
+                {% endif %}
+                {% if deletion.irreversible %}<span class="badge badge-danger ml-1">{{ _("irreversible") }}</span>{% endif %}
+            </div>
+            <div class="btn-group btn-group-sm">
+                {% if deletion.status not in ["completed", "cancelled"] %}
+                    <form method="post" class="mr-1">
+                        <input type="hidden" name="deletion_id" value="{{ deletion.id }}">
+                        <input type="hidden" name="action" value="retry">
+                        <button type="submit" class="btn btn-primary" title="{{ _('Continue / retry all stages') }}"><i class="fa fa-play"></i> {{ _("Continue") }}</button>
+                    </form>
+                    {% if not deletion.irreversible and deletion.status == "sealed" %}
+                    <form method="post">
+                        <input type="hidden" name="deletion_id" value="{{ deletion.id }}">
+                        <input type="hidden" name="action" value="cancel">
+                        <button type="submit" class="btn btn-secondary" title="{{ _('Cancel and restore login') }}"><i class="fa fa-undo"></i> {{ _("Cancel") }}</button>
+                    </form>
+                    {% endif %}
+                {% endif %}
+            </div>
+        </div>
+        <div>
+            <div class="card-body">
+                <p class="small text-muted mb-2">
+                    {{ _("Requested by") }} {{ deletion.requested_by }} &middot;
+                    {{ _("created") }} {{ deletion.created_at }}
+                    {% if deletion.completed_at %}&middot; {{ _("completed") }} {{ deletion.completed_at }}{% endif %}
+                    {% if deletion.pseudonym %}&middot; {{ _("pseudonym") }} <code>{{ deletion.pseudonym }}</code>{% endif %}
+                </p>
+                {% if deletion.error %}<p class="alert alert-danger py-1">{{ deletion.error }}</p>{% endif %}
+                <table class="table table-sm mb-2">
+                    <thead>
+                        <tr><th>{{ _("Stage") }}</th><th>{{ _("State") }}</th><th>{{ _("Attempts") }}</th><th>{{ _("Last error") }}</th><th>{{ _("Remaining references") }}</th><th></th></tr>
+                    </thead>
+                    <tbody>
+                    {% for stage in deletion.stages %}
+                        <tr>
+                            <td>{{ _(stage.name) }}</td>
+                            <td>
+                                {% if stage.state == "done" %}<span class="badge badge-success">{{ _("done") }}</span>
+                                {% elif stage.state == "failed" %}<span class="badge badge-danger">{{ _("failed") }} ({{ stage.failure_type }})</span>
+                                {% elif stage.state == "in_progress" %}<span class="badge badge-info">{{ _("in progress") }}</span>
+                                {% else %}<span class="badge badge-secondary">{{ _("pending") }}</span>{% endif %}
+                            </td>
+                            <td>{{ stage.attempts }}</td>
+                            <td class="small">{{ stage.last_error or "" }}</td>
+                            <td class="small">
+                                {% if stage.remaining %}
+                                    <details><summary>{{ stage.remaining|length }} {{ _("reference(s)") }}</summary>
+                                    <pre class="mb-0">{{ stage.remaining | tojson(indent=2) }}</pre></details>
+                                {% else %}-{% endif %}
+                            </td>
+                            <td>
+                                {% if stage.state == "failed" and deletion.status not in ["completed", "cancelled"] %}
+                                <form method="post">
+                                    <input type="hidden" name="deletion_id" value="{{ deletion.id }}">
+                                    <input type="hidden" name="action" value="retry_stage">
+                                    <input type="hidden" name="stage" value="{{ stage.name }}">
+                                    <button type="submit" class="btn btn-sm btn-outline-primary">{{ _("Retry stage") }}</button>
+                                </form>
+                                {% endif %}
+                            </td>
+                        </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+{% endfor %}
+</div>
+{% endif %}
+
+{% endblock %}

@@ -84,22 +84,35 @@ class WebAppSubmissionManager:
         update_query.update(unset_obj)
 
         # Save submission to database
+        active_usernames = []
         try:
             submission = Submission.objects(id=submissionid).modify(**update_query, new=True)
-            for username in submission["username"]:
+            if submission is None:
+                # The submission was deleted while the job was running (account deletion).
+                return
+            # Ignore users whose account is sealed: the completion of a job that was
+            # already in flight must not recreate user_tasks, LTI queues or caches.
+            active_usernames = [u for u in submission["username"]
+                                if not self._user_manager.is_user_under_deletion(u)]
+            for username in active_usernames:
                 self._user_manager.update_user_stats(username, task, submission, result[0], grade, state, newsub, task_dispenser)
         # Check for size as it also takes the MongoDB command into consideration
         except DocumentTooLarge:
             update_query = {"status": "error", "text": _("Maximum submission size exceeded. Check feedback, stdout, stderr and state."), "grade": 0.0}
             update_query.update(unset_obj)
             submission = Submission.objects(id=submissionid).modify(**update_query, new=True)
+            active_usernames = [u for u in (submission.username if submission else [])
+                                if not self._user_manager.is_user_under_deletion(u)]
+
+        if submission is None:
+            return
 
         plugin_manager.call_hook("submission_done", submission=submission, archive=archive, newsub=newsub)
 
         if "lti_version" in submission:
             lti_score_publisher = self._lti_score_publishers.get(submission["lti_version"], None)
             if lti_score_publisher:
-                lti_score_publisher.add(submission)
+                lti_score_publisher.add(submission, active_usernames)
 
     def _before_submission_insertion(self, course, task, inputdata, debug, obj, username):
         """
@@ -436,8 +449,11 @@ class WebAppSubmissionManager:
         waiting_submission = Submission.objects(
             courseid=course.get_id(), taskid=task.get_id(), username=username, status="waiting"
         ).first()
-        user = User.objects.get(username=username)
+        user = User.objects(username=username).first()
 
+        if user is None or getattr(user, "sealed", False):
+            raise Forbidden(description=_("Your account is being deleted: new submissions are "
+                                          "no longer accepted."))
         if waiting_submission:
             raise Exception("A submission is already pending for this task!")
 

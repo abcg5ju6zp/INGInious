@@ -41,10 +41,18 @@ class LTIScorePublisher(threading.Thread, metaclass=ABCMeta):
                 data = self._queue.get()
 
                 try:
-                    grade = self._user_manager.get_task_cache(data["username"], data["courseid"], data["taskid"])["grade"]
+                    task_cache = self._user_manager.get_task_cache(data["username"], data["courseid"], data["taskid"])
+                    if task_cache is None:
+                        # The user/task data has been removed (account deletion):
+                        # there is no grade left to publish, drop the queued entry.
+                        self._logger.info("Dropping LTI grade for removed user %s", data["username"])
+                        data.delete()
+                        continue
+                    grade = task_cache["grade"]
                 except Exception:
+                    # Transient error: keep the entry and keep the thread alive
                     self._logger.error("An exception occurred while getting a course/LTI secret/grade.", exc_info=True)
-                    return False
+                    continue
 
                 if self.process(data, grade):
                     data.delete()
@@ -66,15 +74,17 @@ class LTIScorePublisher(threading.Thread, metaclass=ABCMeta):
     def process(self, data):
         pass
 
-    def add(self, submission):
+    def add(self, submission, usernames=None):
         """ Add a job in the queue
         :param submission: the submission dict
+        :param usernames: optional list of usernames the grade must be published
+            for (used to skip sealed accounts during an account deletion)
         """
         for tag in self._submission_tags.keys():
             if tag not in submission:
                 return
 
-        for username in submission["username"]:
+        for username in (usernames if usernames is not None else submission["username"]):
             search = {"username": username, "courseid": submission["courseid"], "taskid": submission["taskid"]}
             search.update({key: submission[key] for key in self._submission_tags.keys()})
             entry = self._mongo_document.objects(**search).modify(nb_attempt=0, upsert=True, new=False)

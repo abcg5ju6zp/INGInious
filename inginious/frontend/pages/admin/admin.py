@@ -7,7 +7,7 @@
 
 from flask import request, jsonify, render_template
 
-from inginious.frontend.models import User
+from inginious.frontend.models import User, AccountDeletion
 from inginious.frontend.pages.utils import INGIniousAdministratorPage
 
 
@@ -46,8 +46,31 @@ class AdministrationUserActionPage(INGIniousAdministratorPage):
             if not self.user_manager.activate_user(user.activate):
                 feedback = _("User not found")
         elif action == "delete":
-            if not self.user_manager.delete_user(username):
+            deletion = self.user_manager.delete_user(username)
+            if deletion is None:
                 feedback = _("Impossible to delete this user")
+            elif deletion.status != "completed":
+                feedback = _("Account deletion in progress (status: %s). See the account deletions page.") \
+                    % deletion.status
+        elif action == "deletion_status":
+            deletions = AccountDeletion.objects(username=username).order_by("-created_at")
+            return jsonify({"deletions": [d.to_dict() for d in deletions]})
+        elif action == "deletion_retry":
+            deletion_id = request.form.get("deletion_id")
+            stage = request.form.get("stage") or None
+            deletion = self.user_manager.deletion_manager.get_deletion(deletion_id)
+            if deletion is None:
+                feedback = _("Deletion record not found")
+            else:
+                deletion = self.user_manager.deletion_manager.retry(deletion_id, stage)
+                if deletion.status != "completed":
+                    feedback = _("Deletion not completed yet (status: %s)") % deletion.status
+        elif action == "deletion_cancel":
+            deletion_id = request.form.get("deletion_id")
+            try:
+                self.user_manager.deletion_manager.cancel(deletion_id)
+            except Exception as ex:
+                feedback = str(ex)
         elif action == "get_bindings":
             user_info = self.user_manager.get_user_info(username)
             return jsonify(user_info.bindings if user_info is not None else {})
@@ -68,3 +91,25 @@ class AdministrationUserActionPage(INGIniousAdministratorPage):
         if feedback:
             return jsonify({"error": True, "message": feedback})
         return jsonify({"message": ""})
+
+
+class AdministrationDeletionsPage(INGIniousAdministratorPage):
+    """ Observability and control of staged account deletions. """
+
+    def GET_AUTH(self, *args, **kwargs):
+        deletions = AccountDeletion.objects.order_by("-created_at").limit(200)
+        return render_template("admin/deletions.html", deletions=deletions)
+
+    def POST_AUTH(self, *args, **kwargs):
+        deletion_id = request.form.get("deletion_id")
+        action = request.form.get("action")
+        if action == "retry":
+            self.user_manager.deletion_manager.retry(deletion_id, request.form.get("stage") or None)
+        elif action == "retry_stage":
+            self.user_manager.deletion_manager.retry(deletion_id, request.form.get("stage"))
+        elif action == "cancel":
+            try:
+                self.user_manager.deletion_manager.cancel(deletion_id)
+            except Exception:
+                pass
+        return self.GET_AUTH(*args, **kwargs)

@@ -5,7 +5,7 @@
 
 import tzlocal
 
-from mongoengine import Document,  StringField, ListField, MapField, BooleanField, DynamicField
+from mongoengine import Document,  StringField, ListField, MapField, BooleanField, DynamicField, ObjectIdField
 
 
 class User(Document):
@@ -23,5 +23,13 @@ class User(Document):
     pinned_courses = ListField(StringField(), default=list)
     activate = StringField()
     reset = StringField()
+
+    # Account deletion: when sealed, login, API credentials and new submissions are
+    # frozen while the staged cleanup runs. The credentials are moved aside so that
+    # a cancellation (before the irreversible boundary) can restore the account.
+    sealed = BooleanField(required=True, default=False)
+    sealed_password = StringField()
+    sealed_apikey = StringField()
+    deletion_id = ObjectIdField()
 
     meta = {"collection": "users", "indexes": ["username", "email"]}

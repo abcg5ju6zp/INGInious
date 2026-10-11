@@ -88,12 +88,24 @@ class INGIniousAuthPage(INGIniousPage):
     def GET_AUTH(self, *args, **kwargs):  # pylint: disable=unused-argument
         raise NotAcceptable()
 
+    def _sealed_session_guard(self):
+        """ Log out (without recreating anything) when the account is being deleted. """
+        if session.loggedin and session.username and \
+                self.user_manager.is_user_under_deletion(session.username):
+            self.user_manager.disconnect_user()
+            return render_template("auth.html", auth_methods=self.user_manager.get_auth_methods(),
+                                   error=_("Your account is being deleted."))
+        return None
+
     def GET(self, *args, **kwargs):
         """
         Checks if user is authenticated and calls GET_AUTH or performs logout.
         Otherwise, returns the login template.
         """
         if session.loggedin:
+            sealed = self._sealed_session_guard()
+            if sealed is not None:
+                return sealed
             if (not session.username or (current_app.config["IS_TOS_DEFINED"] and not session.tos_signed)) \
                     and not self.__class__.__name__ == "ProfilePage":
                 return redirect(url_for("profilepage"))
@@ -122,6 +134,9 @@ class INGIniousAuthPage(INGIniousPage):
         Otherwise, returns the login template.
         """
         if session.loggedin:
+            sealed = self._sealed_session_guard()
+            if sealed is not None:
+                return sealed
             if not session.username and not self.__class__.__name__ == "ProfilePage":
                 return redirect(url_for("profilepage"))
 
@@ -163,6 +178,9 @@ class INGIniousAdministratorPage(INGIniousAuthPage):
         """
         username = session.username
         if session.loggedin:
+            sealed = self._sealed_session_guard()
+            if sealed is not None:
+                return sealed
             if not self.user_manager.user_is_superadmin(username):
                 return render_template("forbidden.html",
                                                    message=_("Forbidden"))
@@ -176,8 +194,12 @@ class INGIniousAdministratorPage(INGIniousAuthPage):
         """
 
         username = session.username
-        if session.loggedin and self.user_manager.user_is_superadmin(username):
-            return self.POST_AUTH()
+        if session.loggedin:
+            sealed = self._sealed_session_guard()
+            if sealed is not None:
+                return sealed
+            if self.user_manager.user_is_superadmin(username):
+                return self.POST_AUTH()
         return render_template("forbidden.html",
                                            message=_("You have not sufficient right to see this part."))
 

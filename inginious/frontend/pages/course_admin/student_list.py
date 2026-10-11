@@ -213,7 +213,7 @@ class CourseStudentListPage(INGIniousAdminPage):
                             msg["audiences"] = _("Unknown role: ") + role
                             error["audiences"] = True
                             continue
-                        user = User.objects(**{field: user_id}).first()
+                        user = User.objects(sealed__ne=True, **{field: user_id}).first()
                         if user is not None:
                             user_id = user["username"]
                         else:
@@ -239,8 +239,10 @@ class CourseStudentListPage(INGIniousAdminPage):
                                               "students": [],
                                               "tutors": value})
 
-                    # update list of students and tutors of the course.
-                    new_students = list(set(stud_list).union(set(course_students)))
+                    # update list of students and tutors of the course,
+                    # excluding accounts frozen by an account deletion.
+                    new_students = self.user_manager.filter_available_usernames(
+                        set(stud_list).union(set(course_students)))
                     CourseClass.objects(id=courseid).update(students=new_students)
 
                     # this is done to avoid removing the audience id and impact the group audience filter.
@@ -369,7 +371,8 @@ class CourseStudentListPage(INGIniousAdminPage):
             for student in new_data["students"]:
                 student_allowed_in_group = any(
                     set(audience_students.get(student, [])).intersection(new_data["audiences"]))
-                if student in student_list and (student_allowed_in_group or not new_data["audiences"]):
+                if student in student_list and not self.user_manager.is_user_under_deletion(student) and \
+                        (student_allowed_in_group or not new_data["audiences"]):
                     # Remove user from the other group
                     Group.objects(courseid=course.get_id(), students=student).update(pull__students=student)
                     students.append(student)

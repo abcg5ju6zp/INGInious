@@ -42,7 +42,77 @@ class SubmissionGitSaver(threading.Thread):
         if mustdoinit:
             self.git.init()
         plugin_manager.add_hook('submission_done', self.add)
+        plugin_manager.add_user_data_deletion_handler('git_repo', self.delete_user_data)
         self._logger.info("SubmissionGitSaver started")
+
+    def _rewrite_identity(self, value, username, mode, pseudonym):
+        """ Recursively erase/pseudonymize the username in parsed YAML content. """
+        if isinstance(value, dict):
+            return {k: self._rewrite_identity(v, username, mode, pseudonym) for k, v in value.items()}
+        if isinstance(value, list):
+            return [self._rewrite_identity(v, username, mode, pseudonym) for v in value]
+        if isinstance(value, str):
+            if value == username:
+                return pseudonym if mode == "anonymize" else ""
+            parts = value.split(",")
+            if username in parts:
+                parts = [self._rewrite_identity(p, username, mode, pseudonym) for p in parts if
+                         not (mode == "erase" and p == username)]
+                return ",".join(parts)
+        return value
+
+    def _rewrite_folder(self, path, username, mode, pseudonym):
+        """ Strip identity from the yaml files of one saved submission folder. """
+        for filename in ("input.yaml", "result.yaml"):
+            filepath = os.path.join(path, filename)
+            if not os.path.exists(filepath):
+                continue
+            try:
+                with open(filepath, "r") as f:
+                    content = inginious.common.custom_yaml.load(f)
+                content = self._rewrite_identity(content, username, mode, pseudonym)
+                with open(filepath, "w+") as f:
+                    inginious.common.custom_yaml.dump(content, f)
+            except Exception:
+                self._logger.exception("Could not rewrite %s during user deletion", filepath)
+
+    def delete_user_data(self, username=None, mode="erase", pseudonym=None, references=None, **kwargs):
+        """ Called by the account deletion engine (plugin-declared user data). """
+        references = references or []
+        handled = set()
+        for ref in references:
+            if ref.get("type") != "submission":
+                continue
+            usernames = ref.get("usernames") or [username]
+            if username not in usernames:
+                continue
+            task_dir = os.path.join(self.repopath, ref["courseid"], ref["taskid"])
+            old_path = os.path.join(task_dir, "-".join(usernames))
+            if old_path in handled or not os.path.exists(old_path):
+                continue
+            handled.add(old_path)
+
+            remaining = [u for u in usernames if u != username]
+            if mode == "erase" and not remaining:
+                shutil.rmtree(old_path)
+                continue
+
+            self._rewrite_folder(old_path, username, mode, pseudonym)
+            new_name = "-".join(remaining if mode == "erase" else remaining + [pseudonym])
+            if new_name:
+                new_path = os.path.join(task_dir, new_name)
+                if os.path.exists(new_path):
+                    shutil.rmtree(old_path)
+                else:
+                    os.rename(old_path, new_path)
+
+        if handled:
+            try:
+                self.git.add('--all', '.')
+                self.git.commit('-m', "Account deletion cleanup for " + str(username))
+            except Exception:
+                pass  # nothing to commit or git unavailable
+        return None
 
     def add(self, submission, archive, _):
         """ Add a new submission to the repo (add the to queue, will be saved async)"""

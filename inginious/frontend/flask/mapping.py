@@ -6,7 +6,7 @@
 from werkzeug.routing import BaseConverter
 
 from inginious.frontend.pages.admin.admin import AdministrationUsersPage, \
-    AdministrationUserActionPage
+    AdministrationUserActionPage, AdministrationDeletionsPage
 from inginious.frontend.pages.maintenance import MaintenancePage
 from inginious.frontend.pages.utils import INGIniousStaticPage
 from inginious.frontend.pages.index import IndexPage
@@ -158,5 +158,7 @@ def init_flask_mapping(flask_app):
                            view_func=APISubmissionSingle.as_view('apisubmissions'))
     flask_app.add_url_rule('/administrator/users',
                            view_func=AdministrationUsersPage.as_view('administrationuserspage'))
+    flask_app.add_url_rule('/administrator/deletions',
+                           view_func=AdministrationDeletionsPage.as_view('administrationdeletionspage'))
     flask_app.add_url_rule('/administrator/user_action',
                            view_func=AdministrationUserActionPage.as_view('administrationuseractionpage'))

@@ -86,7 +86,7 @@ class LTILoginPage(INGIniousPage):
             raise Forbidden(description=_("No LTI data available."))
 
         user_profile = User.objects(**{"ltibindings__" + self._mongo_field(data): data["username"]}).first()
-        if user_profile:
+        if user_profile and not getattr(user_profile, "sealed", False):
             self.user_manager.connect_user(user_profile)
 
         if session.loggedin:

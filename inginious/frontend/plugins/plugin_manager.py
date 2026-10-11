@@ -21,10 +21,45 @@ class PluginManager(object):
     def __init__(self):
         self._logger = logging.getLogger("inginious.frontend.plugin_manager")
         self._hooks = {}
+        self._user_data_deletion_handlers = {}
         self._loaded = False
         self._flask_app = None
         self._user_manager = None
         self._submission_manager = None
+
+    def add_user_data_deletion_handler(self, name, handler):
+        """ Register a handler that deletes/anonymizes user-owned data of a plugin.
+
+        The handler is called during the "plugins" stage of an account deletion with
+        keyword arguments:
+            username     -- the frozen login name being deleted
+            user_id      -- the users collection ObjectId (as a string)
+            deletion_id  -- the stable AccountDeletion id
+            mode         -- "erase" or "anonymize"
+            pseudonym    -- non-reversible replacement for the username (anonymize)
+            references   -- snapshot of strong references found by the core engine,
+                            with entries like {"type": "submission", "courseid": ...,
+                            "taskid": ..., "usernames": [...]}
+
+        It must return None (everything cleaned) or {"remaining": [references]} and
+        should raise on failure: each plugin failure is reported independently and
+        the stage can be retried separately.
+        """
+        self._user_data_deletion_handlers[name] = handler
+
+    def run_user_data_deletion(self, **kwargs):
+        """ Invoke every declared user-data handler, isolating failures per plugin. """
+        results = []
+        for name, handler in self._user_data_deletion_handlers.items():
+            try:
+                output = handler(**kwargs) or {}
+                results.append({"plugin": name,
+                                "remaining": output.get("remaining", []) if isinstance(output, dict) else [],
+                                "error": None})
+            except Exception as ex:
+                self._logger.exception("Plugin %s failed to delete user data", name)
+                results.append({"plugin": name, "remaining": [], "error": str(ex)})
+        return results
 
     def _exception_free_callback(self, callback, *args, **kwargs):
         """ A wrapper that remove all exceptions raised from hooks """

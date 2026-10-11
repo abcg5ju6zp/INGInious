@@ -63,6 +63,9 @@ def _put_configuration_defaults(config):
         "BACKEND": config.get("backend", "local"),
         "DEBUG": config.get("web_debug", False),
         "DEBUG_ASYNCIO": config.get('debug_asyncio', False),
+        # Account deletion retention: "erase" removes all data, "anonymize" keeps
+        # historical grades de-identified (they can no longer be joined to a login).
+        "DELETION_RETENTION": config.get("deletion_retention", "erase"),
         "LOCAL-CONFIG": config.get("local-config", {}),
         "LTI_CONFIG": config.get("lti_config", {}),
         "MAINTENANCE": config.get("maintenance", False),
@@ -224,6 +227,12 @@ def get_app(config):
 
     # Loads plugins
     plugin_manager.load(client, flask_app, user_manager, submission_manager, config["PLUGINS"])
+
+    # Wire the staged account deletion engine and resume any interrupted deletion
+    from inginious.frontend.account_deletion import AccountDeletionManager
+    deletion_manager = AccountDeletionManager(user_manager, plugin_manager)
+    user_manager.set_deletion_manager(deletion_manager)
+    deletion_manager.start_resume_thread()
 
     # Start the inginious.backend
     client.start()

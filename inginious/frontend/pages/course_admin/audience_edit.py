@@ -87,7 +87,7 @@ class CourseEditAudience(INGIniousAdminPage):
             audiences_dict = json.loads(data["audiences"])
             student_list = self.user_manager.get_course_registered_users(course, False)
             for username in audiences_dict[0]["students"]:
-                userdata = User.objects(username=username).first()
+                userdata = User.objects(sealed__ne=True, username=username).first()
                 if userdata is None:
                     msg = _("User not found : {}".format(username))
                     error = True
@@ -96,9 +96,13 @@ class CourseEditAudience(INGIniousAdminPage):
                 elif username not in student_list:
                     self.user_manager.course_register_user(course, username, force=True)
 
+            # Never re-attach accounts frozen by an account deletion
+            audience_students = self.user_manager.filter_available_usernames(audiences_dict[0]["students"])
+            audience_tutors = self.user_manager.filter_available_usernames(audiences_dict[0]["tutors"])
+
             Audience.objects(id=audiences_dict[0]["_id"]).update(
-                students=audiences_dict[0]["students"],
-                tutors=audiences_dict[0]["tutors"],
+                students=audience_students,
+                tutors=audience_tutors,
                 description=str(audiences_dict[0]["description"])
             )
             msg = _("Audience updated.")

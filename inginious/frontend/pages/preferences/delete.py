@@ -18,13 +18,17 @@ class DeletePage(INGIniousAuthPage):
         msg = ""
 
         username = session.username
-        result = self.user_manager.delete_user(username, data.get("delete_email", ""))
+        deletion = self.user_manager.delete_user(username, data.get("delete_email", ""))
 
-        if not result:
+        if deletion is None:
             error = True
             msg = _("The specified email is incorrect.")
         else:
+            # The account is at least sealed: the session can no longer be used,
+            # even if some cleanup stages are still pending (they resume server-side).
             self.user_manager.disconnect_user()
+            if deletion.status != "completed":
+                msg = _("Your account deletion is in progress and will finish shortly.")
         return msg, error
 
     def GET_AUTH(self):  # pylint: disable=arguments-differ

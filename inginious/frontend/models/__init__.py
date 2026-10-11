@@ -6,6 +6,7 @@
 from mongoengine import Document, IntField
 
 from inginious import DB_VERSION
+from inginious.frontend.models.account_deletion import AccountDeletion, DeletionStage
 from inginious.frontend.models.audience import Audience
 from inginious.frontend.models.course_class import CourseClass
 from inginious.frontend.models.group import Group
