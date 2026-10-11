@@ -5,16 +5,16 @@
 
 from mongoengine import Document, StringField, ListField, DynamicField, IntField
 
+from inginious.frontend.models.lti_delivery import LTIDelivery
 
-class LTIGrade(Document):
-    courseid = StringField()
-    taskid = StringField()
-    username = StringField()
+
+class LTIGrade(LTIDelivery):
+    # Deprecated: superseded by ``attempts``; kept to self-migrate legacy documents.
     nb_attempt = IntField()
 
     message_launch_id = StringField()
 
-    meta = { 'collection': 'lti_grade_queue' }
+    meta = {'collection': 'lti_grade_queue'}
 
 class LaunchData(Document):
     key = StringField(required=True)

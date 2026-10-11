@@ -1,0 +1,108 @@
+{# This file is part of INGInious. See the LICENSE and the COPYRIGHTS files for #}
+{# more information about the licensing of this file. #}
+
+{% extends "layout.html" %}
+
+{% block title %} {{ _("LTI grade deliveries") }} {% endblock %}
+
+{% block column %}
+    {% with current='lti_deliveries' %}
+        {% include 'course_admin/menu.html' %}
+    {% endwith %}
+{% endblock %}
+
+{% block navbar %}
+    <nav aria-label="breadcrumb">
+        <ol class="breadcrumb">
+            <li class="breadcrumb-item"><a href="{{ url_for('coursepage', courseid=course.get_id()) }}">{{ course.get_name(session.language) }}</a></li>
+            <li class="breadcrumb-item"><a href="{{ url_for('courseredirect', courseid=course.get_id()) }}" title="{{ _('Administration') }}" data-toggle="tooltip" data-placement="bottom">
+                <i class="fa fa-user-secret"></i></a></li>
+            <li class="breadcrumb-item active"><a href="#"><i class="fa fa-exchange"></i> {{ _("LTI grade deliveries") }} <span class="sr-only">{{ _("(current)") }}</span></a></li>
+        </ol>
+    </nav>
+{% endblock %}
+
+{% block content %}
+<h2>{{ _("LTI grade deliveries") }}</h2>
+
+<form class="form-inline mb-3" method="get">
+    <label class="sr-only" for="status_filter">{{ _("Status") }}</label>
+    <select class="form-control mb-2 mr-sm-2" name="status" id="status_filter">
+        <option value="" {% if not status %}selected{% endif %}>{{ _("All statuses") }}</option>
+        {% for s, (label, cls) in status_labels.items() %}
+            <option value="{{ s }}" {% if status == s %}selected{% endif %}>{{ _(label) }}</option>
+        {% endfor %}
+    </select>
+    <label class="sr-only" for="taskid_filter">{{ _("Task") }}</label>
+    <input type="text" class="form-control mb-2 mr-sm-2" id="taskid_filter" name="taskid"
+           value="{{ taskid }}" placeholder="{{ _('Task id') }}">
+    <label class="sr-only" for="username_filter">{{ _("User") }}</label>
+    <input type="text" class="form-control mb-2 mr-sm-2" id="username_filter" name="username"
+           value="{{ username }}" placeholder="{{ _('Username') }}">
+    <button type="submit" class="btn btn-primary mb-2"><i class="fa fa-filter"></i> {{ _("Filter") }}</button>
+</form>
+
+{% if deliveries %}
+<div class="table-responsive">
+<table class="table table-sm table-striped align-middle">
+    <thead>
+        <tr>
+            <th>{{ _("LTI") }}</th>
+            <th>{{ _("Task") }}</th>
+            <th>{{ _("User") }}</th>
+            <th>{{ _("Status") }}</th>
+            <th>{{ _("Attempts") }}</th>
+            <th>{{ _("Last error") }}</th>
+            <th>{{ _("Grade sent") }}</th>
+            <th>{{ _("Next attempt") }}</th>
+            <th>{{ _("Created") }}</th>
+            <th>{{ _("Finished") }}</th>
+            <th></th>
+        </tr>
+    </thead>
+    <tbody>
+    {% for version, d in deliveries %}
+        <tr>
+            <td><span class="badge badge-light">{{ version }}</span></td>
+            <td>{{ d.taskid }}</td>
+            <td>{{ d.username }}</td>
+            <td>
+                {% set label, cls = status_labels[d.status] %}
+                <span class="badge badge-{{ cls }}">{{ _(label) }}</span>
+            </td>
+            <td>{{ d.attempts }}/{{ max_attempts }}</td>
+            <td>
+                {% if d.error_category %}
+                    <strong>{{ _(category_labels[d.error_category]) }}</strong>
+                    {% if d.error_summary %}<div class="small text-muted">{{ d.error_summary }}</div>{% endif %}
+                {% else %}
+                    <span class="text-muted">&mdash;</span>
+                {% endif %}
+            </td>
+            <td>{% if d.sent_grade is not none %}{{ '%.1f'|format(d.sent_grade) }}{% else %}<span class="text-muted">&mdash;</span>{% endif %}</td>
+            <td class="small">{% if d.next_attempt_at %}{{ d.next_attempt_at.strftime('%Y-%m-%d %H:%M:%S') }} UTC{% else %}<span class="text-muted">&mdash;</span>{% endif %}</td>
+            <td class="small">{{ d.created_at.strftime('%Y-%m-%d %H:%M:%S') }} UTC</td>
+            <td class="small">{% if d.finished_at %}{{ d.finished_at.strftime('%Y-%m-%d %H:%M:%S') }} UTC{% else %}<span class="text-muted">&mdash;</span>{% endif %}</td>
+            <td>
+                {% if d.status == 'failed' %}
+                <form method="post" style="display:inline;">
+                    <input type="hidden" name="token" value="{{ thehash }}">
+                    <input type="hidden" name="version" value="{{ version }}">
+                    <input type="hidden" name="delivery_id" value="{{ d.id }}">
+                    <button type="submit" class="btn btn-sm btn-outline-primary"
+                            title="{{ _('Reset attempts and enqueue this delivery again after the course or platform configuration has been fixed.') }}">
+                        <i class="fa fa-retry"></i> {{ _("Requeue") }}
+                    </button>
+                </form>
+                {% endif %}
+            </td>
+        </tr>
+    {% endfor %}
+    </tbody>
+</table>
+</div>
+<p class="text-muted small">{{ _("Only the 100 most recent deliveries matching the filters are shown.") }}</p>
+{% else %}
+<div class="alert alert-info">{{ _("No LTI grade delivery matches these filters.") }}</div>
+{% endif %}
+{% endblock %}

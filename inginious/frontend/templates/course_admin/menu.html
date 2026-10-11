@@ -21,6 +21,11 @@
     <a href="{{ url_for('coursesubmissionspage', courseid=course.get_id()) }}" class="list-group-item list-group-item-action {% if current == 'submissions' %}active{% endif %}">
         <i class='fa fa-file-code-o fa-fw mr-2'></i>{{ _("Submissions") }}
     </a>
+    {% if user_manager.has_admin_rights_on_course(course) and course.is_lti() %}
+    <a href="{{ url_for('courseltideliveriespage', courseid=course.get_id()) }}" class="list-group-item list-group-item-action {% if current == 'lti_deliveries' %}active{% endif %}">
+        <i class='fa fa-exchange fa-fw mr-2'></i>{{ _("LTI grade deliveries") }}
+    </a>
+    {% endif %}
     {% if user_manager.has_admin_rights_on_course(course) %}
     <a href="{{ url_for('coursedangerzonepage', courseid=course.get_id()) }}" class="list-group-item list-group-item-action list-group-item-danger {% if current == 'danger' %}active{% endif %}">
         <i class='fa fa-bomb fa-fw mr-2'></i>{{ _("Danger zone") }}

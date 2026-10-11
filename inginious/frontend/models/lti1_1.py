@@ -5,6 +5,8 @@
 
 from mongoengine import Document, StringField, DateTimeField, IntField
 
+from inginious.frontend.models.lti_delivery import LTIDelivery
+
 
 class Nonce(Document):
     timestamp = DateTimeField()
@@ -22,10 +24,8 @@ class Nonce(Document):
         ]
     }
 
-class LISOutcome(Document):
-    courseid = StringField()
-    taskid = StringField()
-    username = StringField()
+class LISOutcome(LTIDelivery):
+    # Deprecated: superseded by ``attempts``; kept to self-migrate legacy documents.
     nb_attempt = IntField()
 
     outcome_consumer_key = StringField()

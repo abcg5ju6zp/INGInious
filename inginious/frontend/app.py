@@ -116,8 +116,12 @@ def _put_configuration_defaults(config):
 
     return new_config
 
-def _close_app(client):
+def _close_app(client, lti_score_publishers=None):
     """ Ensures that the app is properly closed """
+    for publisher in (lti_score_publishers or {}).values():
+        publisher.stop()
+    for publisher in (lti_score_publishers or {}).values():
+        publisher.join(timeout=5)  # an in-flight send ends with its hard deadline; daemon otherwise
     client.close()
     disconnect()
 
@@ -214,6 +218,7 @@ def get_app(config):
     flask_app.submission_manager = submission_manager
     flask_app.user_manager = user_manager
     flask_app.client = client
+    flask_app.lti_score_publishers = lti_score_publishers
 
     # Init the mapping of the app
     if config["MAINTENANCE"]:
@@ -228,4 +233,4 @@ def get_app(config):
     # Start the inginious.backend
     client.start()
 
-    return flask_app.wsgi_app, lambda: _close_app(client)
+    return flask_app.wsgi_app, lambda: _close_app(client, lti_score_publishers)

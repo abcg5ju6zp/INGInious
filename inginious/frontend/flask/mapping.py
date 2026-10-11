@@ -46,6 +46,7 @@ from inginious.frontend.pages.course_admin.audience_edit import CourseEditAudien
 from inginious.frontend.pages.course_admin.task_edit import CourseEditTask
 from inginious.frontend.pages.course_admin.task_edit_file import CourseTaskFiles
 from inginious.frontend.pages.course_admin.danger_zone import CourseDangerZonePage
+from inginious.frontend.pages.course_admin.lti_deliveries import CourseLTIDeliveriesPage
 from inginious.frontend.pages.course_admin.statistics import CourseStatisticsPage
 from inginious.frontend.pages.course_admin.search_user import CourseAdminSearchUserPage
 
@@ -136,6 +137,8 @@ def init_flask_mapping(flask_app):
                            view_func=CourseTaskFiles.as_view('coursetaskfiles'))
     flask_app.add_url_rule('/admin/<courseid>/search_user/<request>',
                            view_func=CourseAdminSearchUserPage.as_view('searchuserpage'))
+    flask_app.add_url_rule('/admin/<courseid>/lti_deliveries',
+                           view_func=CourseLTIDeliveriesPage.as_view('courseltideliveriespage'))
     flask_app.add_url_rule('/admin/<courseid>/danger',
                            view_func=CourseDangerZonePage.as_view('coursedangerzonepage'))
     flask_app.add_url_rule('/admin/<courseid>/stats',

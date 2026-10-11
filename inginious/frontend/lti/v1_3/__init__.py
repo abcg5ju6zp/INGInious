@@ -7,6 +7,7 @@ from datetime import datetime
 import logging
 import hashlib
 
+import requests
 from pylti1p3.contrib.flask import FlaskMessageLaunch
 from pylti1p3.grade import Grade
 from pylti1p3.launch_data_storage.base import LaunchDataStorage
@@ -15,6 +16,7 @@ from pylti1p3.exception import LtiServiceException
 
 from inginious.frontend.lti import LTIScorePublisher
 from inginious.frontend.courses import Course
+from inginious.frontend.lti.delivery import LocalContextError, RemoteTemporaryError, RemoteRejectedError
 from inginious.frontend.models import LTIGrade, LaunchData
 
 
@@ -67,31 +69,50 @@ class LTIGradeManager(LTIScorePublisher):
         self._global_config = global_config
         super(LTIGradeManager, self).__init__(LTIGrade, user_manager)
 
-    def process(self, mongo_entry : LTIGrade, grade):
-        courseid, taskid, message_launch_id = (mongo_entry.courseid, mongo_entry.taskid, mongo_entry.message_launch_id)
+    def prepare(self, entry, grade):
+        try:
+            course = Course.get(entry.courseid)
+        except Exception:
+            self._logger.error("Could not load course %s for LTI 1.3 delivery.", entry.courseid, exc_info=True)
+            raise LocalContextError("course could not be loaded")
 
         try:
-            course = Course.get(courseid)
             tool_config = lti_tool(course.lti_config(), self._global_config)
-            message_launch = FlaskMessageLaunch.from_cache(message_launch_id, request=None, tool_config=tool_config, launch_data_storage=MongoLTILaunchDataStorage())
+            message_launch = FlaskMessageLaunch.from_cache(
+                entry.message_launch_id, request=None, tool_config=tool_config,
+                launch_data_storage=MongoLTILaunchDataStorage())
             launch_data = message_launch.get_launch_data()
             ags = message_launch.get_ags()
-
-            if ags.can_put_grade():
-                sc = Grade()
-                sc.set_score_given(grade) \
-                    .set_score_maximum(100.0) \
-                    .set_timestamp(datetime.now().astimezone().isoformat()) \
-                    .set_activity_progress('Completed') \
-                    .set_grading_progress('FullyGraded') \
-                    .set_user_id(launch_data['sub'])
-
-                ags.put_grade(sc)
-                return True
-        except LtiServiceException as lti_ex:
-            self._logger.error(str(lti_ex))
-            self._logger.error(lti_ex.response.reason)
         except Exception:
-            self._logger.error("An exception occurred while sending a grade to the LTI Platform.", exc_info=True)
+            self._logger.error("Could not restore LTI 1.3 launch context for delivery %s.",
+                               entry.id, exc_info=True)
+            raise LocalContextError("LTI 1.3 launch context could not be restored")
 
-        return False
+        return {"ags": ags, "sub": launch_data['sub'], "grade": grade}
+
+    def send(self, context):
+        ags = context["ags"]
+        if not ags.can_put_grade():
+            # This launch never granted the grade-write capability; retrying
+            # the same launch cannot change that.
+            raise RemoteRejectedError("platform did not grant grade-write capability for this launch")
+
+        grade = Grade()
+        grade.set_score_given(context["grade"]) \
+            .set_score_maximum(100.0) \
+            .set_timestamp(datetime.now().astimezone().isoformat()) \
+            .set_activity_progress('Completed') \
+            .set_grading_progress('FullyGraded') \
+            .set_user_id(context["sub"])
+
+        try:
+            ags.put_grade(grade)
+        except LtiServiceException as lti_ex:
+            status_code = getattr(getattr(lti_ex, "response", None), "status_code", None)
+            # Never persist str(LtiServiceException): it contains the URL and
+            # the full response body.
+            if status_code == 408 or status_code == 429 or (status_code is not None and status_code >= 500):
+                raise RemoteTemporaryError("platform reported a temporary failure (HTTP {})".format(status_code))
+            raise RemoteRejectedError("platform rejected the grade (HTTP {})".format(status_code))
+        except requests.RequestException:
+            raise RemoteTemporaryError("network error while contacting the LTI platform")
