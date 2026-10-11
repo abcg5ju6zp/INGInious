@@ -7,7 +7,8 @@
 from flask import session, redirect, request, render_template, url_for
 from werkzeug.exceptions import NotFound
 
-from inginious.common.exceptions import InvalidNameException, CourseNotFoundException, CourseUnreadableException
+from inginious.common.exceptions import InvalidNameException, CourseNotFoundException, CourseUnreadableException, \
+    CourseDrainingException
 
 from inginious.frontend.pages.utils import INGIniousAuthPage
 from inginious.frontend.courses import Course
@@ -38,7 +39,10 @@ class CourseRegisterPage(INGIniousAuthPage):
     def POST_AUTH(self, courseid):
         course, username = self.basic_checks(courseid)
         user_input = request.form
-        success = self.user_manager.course_register_user(course, username, user_input.get("register_password", None))
+        try:
+            success = self.user_manager.course_register_user(course, username, user_input.get("register_password", None))
+        except CourseDrainingException:
+            return render_template("course_unavailable.html", reason="deleting")
 
         if success:
             return redirect(url_for("coursepage", courseid=course.get_id()))

@@ -21,6 +21,7 @@ from bson.objectid import ObjectId
 
 from inginious.common import custom_yaml
 from inginious.common.base import id_checker
+from inginious.frontend.course_deletion_gate import is_course_draining, assert_course_writable
 from inginious.frontend.parsable_text import ParsableText
 from inginious.frontend.plugins import plugin_manager
 from inginious.frontend.models import UserTask, User, Submission, Group, Audience
@@ -56,9 +57,20 @@ class WebAppSubmissionManager:
                            stderr, task_dispenser, newsub=True):
         """ Callback called by Client when a job is done. Updates the submission in the database with the data returned after the completion of the
         job """
-        submission = self.get_submission(submissionid)
+        try:
+            submission = self.get_submission(submissionid)
+        except Submission.DoesNotExist:
+            # The submission (and its blobs) were already removed, e.g. by a
+            # course deletion: nothing to update and nothing to resurrect.
+            return
 
-        if archive:
+        # While the course is being deleted, late grading callbacks must not
+        # orphan GridFS blobs, resurrect user_tasks or re-feed plugins/LTI
+        # queues. The submission row may still reach its final state: it is
+        # wiped by the deletion state machine a bit later.
+        draining = is_course_draining(course.get_id())
+
+        if archive and not draining:
             submission.archive.put(archive)
             submission.save()
 
@@ -86,13 +98,21 @@ class WebAppSubmissionManager:
         # Save submission to database
         try:
             submission = Submission.objects(id=submissionid).modify(**update_query, new=True)
-            for username in submission["username"]:
-                self._user_manager.update_user_stats(username, task, submission, result[0], grade, state, newsub, task_dispenser)
+            if submission is None:
+                return
+            if not draining:
+                for username in submission["username"]:
+                    self._user_manager.update_user_stats(username, task, submission, result[0], grade, state, newsub, task_dispenser)
         # Check for size as it also takes the MongoDB command into consideration
         except DocumentTooLarge:
             update_query = {"status": "error", "text": _("Maximum submission size exceeded. Check feedback, stdout, stderr and state."), "grade": 0.0}
             update_query.update(unset_obj)
             submission = Submission.objects(id=submissionid).modify(**update_query, new=True)
+            if draining or submission is None:
+                return
+
+        if draining:
+            return
 
         plugin_manager.call_hook("submission_done", submission=submission, archive=archive, newsub=newsub)
 
@@ -155,6 +175,8 @@ class WebAppSubmissionManager:
         """
         if not session.loggedin:
             raise Exception("A user must be logged in to submit an object")
+
+        assert_course_writable(course.get_id())
 
         inputdata = submission.get_input()
         username = session.username
@@ -431,6 +453,7 @@ class WebAppSubmissionManager:
         :type debug: bool or string
         :returns: the new submission id and the removed submission id
         """
+        assert_course_writable(course.get_id())
 
         # Prevent student from submitting several submissions together
         waiting_submission = Submission.objects(

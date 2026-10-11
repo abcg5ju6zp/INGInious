@@ -9,6 +9,7 @@ from flask import session, render_template
 
 from inginious.frontend.pages.utils import INGIniousPage
 from inginious.frontend.courses import Course
+from inginious.frontend.course_deletion_gate import is_course_draining
 
 class CourseListPage(INGIniousPage):
     """ Index page """
@@ -28,7 +29,8 @@ class CourseListPage(INGIniousPage):
         all_courses = Course.get_all()
 
         # Display
-        open_courses = {courseid: course for courseid, course in all_courses.items() if course.is_open_to_non_staff()}
+        open_courses = {courseid: course for courseid, course in all_courses.items()
+                        if course.is_open_to_non_staff() and not is_course_draining(courseid)}
         open_courses = OrderedDict(sorted(iter(open_courses.items()), key=lambda x: x[1].get_name(session.language)))
 
         return render_template("courselist.html", open_courses=open_courses, user_info=user_info)

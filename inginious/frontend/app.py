@@ -18,6 +18,7 @@ from inginious.frontend.environment_types import register_base_env_types
 from inginious.frontend.arch_helper import create_arch, start_asyncio_and_zmq
 from inginious.frontend.plugins import plugin_manager
 from inginious.frontend.submission_manager import WebAppSubmissionManager
+from inginious.frontend.course_deletion import CourseDeletionManager
 from inginious.frontend.user_manager import UserManager
 from inginious.frontend.i18n import available_languages, gettext
 from inginious import __version__, DB_VERSION
@@ -116,8 +117,10 @@ def _put_configuration_defaults(config):
 
     return new_config
 
-def _close_app(client):
+def _close_app(client, course_deletion_manager=None):
     """ Ensures that the app is properly closed """
+    if course_deletion_manager is not None:
+        course_deletion_manager.stop()
     client.close()
     disconnect()
 
@@ -210,10 +213,15 @@ def get_app(config):
         return flask.render_template("internalerror.html", message=e.description), 500
     flask_app.register_error_handler(InternalServerError, flask_internalerror)
 
+    # Drives draining-based course deletions (started below once plugins and the
+    # client are ready; built now so pages can always reach the singleton).
+    course_deletion_manager = CourseDeletionManager(client, config.get("COURSE_DELETION"))
+
     # Insert the needed singletons into the application, to allow pages to call them
     flask_app.submission_manager = submission_manager
     flask_app.user_manager = user_manager
     flask_app.client = client
+    flask_app.course_deletion_manager = course_deletion_manager
 
     # Init the mapping of the app
     if config["MAINTENANCE"]:
@@ -228,4 +236,8 @@ def get_app(config):
     # Start the inginious.backend
     client.start()
 
-    return flask_app.wsgi_app, lambda: _close_app(client)
+    # Resume and drive pending course deletions (after plugins loaded, so the
+    # course_deletion_drain/course_deleted hooks are registered).
+    course_deletion_manager.start()
+
+    return flask_app.wsgi_app, lambda: _close_app(client, course_deletion_manager)

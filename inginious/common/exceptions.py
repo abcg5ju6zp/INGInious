@@ -16,6 +16,7 @@ class InvalidNameException(Exception):
 class CourseNotFoundException(Exception):
     pass
 
+
 class CourseNotArchivable(Exception):
     pass
 
@@ -31,8 +32,10 @@ class CourseUnreadableException(Exception):
 class CourseAlreadyExistsException(Exception):
     pass
 
+
 class TaskAlreadyExistsException(Exception):
     pass
+
 
 class TaskUnreadableException(Exception):
     pass
@@ -45,3 +48,12 @@ class TaskReaderNotFoundException(Exception):
 class ImportCourseException(Exception):
     pass
 
+
+class CourseDrainingException(Exception):
+    """ Raised when a write to a course is attempted while the course is being deleted. """
+    pass
+
+
+class CourseOperationInProgressException(Exception):
+    """ Raised when an archive/export/delete operation cannot acquire the course lock. """
+    pass

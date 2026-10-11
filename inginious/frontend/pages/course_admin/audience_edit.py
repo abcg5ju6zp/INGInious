@@ -61,6 +61,7 @@ class CourseEditAudience(INGIniousAdminPage):
     def POST_AUTH(self, courseid, audienceid=''):  # pylint: disable=arguments-differ
         """ Edit a audience """
         course, __ = self.get_course_and_check_rights(courseid, allow_all_staff=True)
+        self.require_course_writable(courseid)
         msg=''
         error = False
 

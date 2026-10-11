@@ -18,6 +18,7 @@ from inginious.frontend.pages.tasks import BaseTaskPage
 from inginious.frontend.pages.lti import LTIBindPage, LTILoginPage
 from inginious.frontend.lti.v1_3 import MongoLTILaunchDataStorage, lti_tool, lti_keyset_hash
 from inginious.frontend.courses import Course
+from inginious.frontend.course_deletion_gate import is_course_draining
 
 from inginious.frontend.models import LTIData
 
@@ -36,6 +37,9 @@ class LTI13TaskPage(INGIniousAuthPage):
             course = Course.get(courseid)
         except CourseNotFoundException as ex:
             raise NotFound(description=str(ex))
+
+        if is_course_draining(courseid):
+            raise Forbidden(description=_("This course is being deleted; LTI access is closed."))
 
         if not course.lti_secrets().get(data["platform_instance_id"]) == data["course_secret"]:
             raise Forbidden(description=_("Invalid LTI secret"))
@@ -84,6 +88,9 @@ class LTI13OIDCLoginPage(INGIniousPage):
             lti_config = Course.get(courseid).lti_config() if courseid else {}
         except CourseNotFoundException as ex:
             raise NotFound(description=_(str(ex)))
+
+        if courseid and is_course_draining(courseid):
+            raise Forbidden(description=_("This course is being deleted; LTI launches are closed."))
 
         flask_request = FlaskRequest()
         target_link_uri = flask_request.get_param('target_link_uri')
@@ -144,6 +151,9 @@ class LTI13LaunchPage(INGIniousPage):
             taskid = ""
             secret = ""
             redir_url = url_for("lti1.3deeplinkpage")
+
+        if courseid and is_course_draining(courseid):
+            raise Forbidden(description=_("This course is being deleted; LTI launches are closed."))
 
         if not session.is_lti:
             raise Exception("Not an LTI session")
@@ -239,6 +249,9 @@ class LTI13DeepLinkPage(INGIniousPage):
             task = course.get_task(taskid)
         except CourseNotFoundException as ex:
             raise NotFound(description=_(str(ex)))
+
+        if is_course_draining(courseid):
+            raise Forbidden(description=_("This course is being deleted; LTI launches are closed."))
 
         # Ftech LTI session info
         message_launch_id = session.lti["message_launch_id"]

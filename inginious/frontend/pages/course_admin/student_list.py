@@ -57,6 +57,7 @@ class CourseStudentListPage(INGIniousAdminPage):
     def POST_AUTH(self, courseid):  # pylint: disable=arguments-differ
         """ POST request """
         course, __ = self.get_course_and_check_rights(courseid, None, True)
+        self.require_course_writable(courseid)
         data = request.form.copy()
         data["delete"] = request.form.getlist("delete")
         data["groupfile"] = request.files.get("groupfile")

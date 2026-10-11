@@ -7,6 +7,7 @@ import logging
 from flask import request, Response, render_template
 from werkzeug.exceptions import NotFound, Forbidden
 
+from inginious.common.exceptions import CourseOperationInProgressException
 from inginious.frontend.pages.course_admin.utils import make_csv, INGIniousSubmissionsAdminPage
 from inginious.frontend.models import Submission
 
@@ -50,7 +51,11 @@ class CourseSubmissionsPage(INGIniousSubmissionsAdminPage):
                     sub_folders = list(download_type.split('/'))
                 else:
                     sub_folders = list(download_type.split('/')) + ["submissiondateid"]
-                archive, error = self.submission_manager.get_submission_archive(course, data, sub_folders, simplify="simplify" in user_input)
+                try:
+                    with self.course_deletion_manager.operation_lock(courseid, "export", lease_seconds=120, heartbeat=20):
+                        archive, error = self.submission_manager.get_submission_archive(course, data, sub_folders, simplify="simplify" in user_input)
+                except CourseOperationInProgressException as e:
+                    raise Forbidden(description=str(e))
                 if not error:
                     response = Response(response=archive, content_type='application/x-gzip')
                     response.headers['Content-Disposition'] = 'attachment; filename="submissions.tgz"'
@@ -100,7 +105,11 @@ class CourseSubmissionsPage(INGIniousSubmissionsAdminPage):
 
             self._logger.info("Downloading submission %s - %s - %s - %s", submission.id, submission['courseid'],
                               submission['taskid'], submission['username'])
-            archive, error = self.submission_manager.get_submission_archive(course, [submission], [])
+            try:
+                with self.course_deletion_manager.operation_lock(courseid, "export", lease_seconds=120, heartbeat=20):
+                    archive, error = self.submission_manager.get_submission_archive(course, [submission], [])
+            except CourseOperationInProgressException as e:
+                raise Forbidden(description=str(e))
             if not error:
                 response = Response(response=archive, content_type='application/x-gzip')
                 response.headers['Content-Disposition'] = 'attachment; filename="submissions.tgz"'

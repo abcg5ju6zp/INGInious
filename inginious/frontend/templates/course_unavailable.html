@@ -17,7 +17,9 @@
             <img src="{{ url_for('static', filename='images/logo_maintenance.png') }}" style="margin:auto; display:block;"/>
             <div class="alert alert-warning" role="alert" style="text-align: center;">
                 <b>{{ _("Error 403") }}</b>
-                {% if reason == "closed" or reason == "unregistered_not_previewable" %}
+                {% if reason == "deleting" %}
+                    {{ _("This course is being deleted and is no longer accessible. Read-only information is available to its administrators.") }}
+                {% elif reason == "closed" or reason == "unregistered_not_previewable" %}
                     {{ _("This course is closed.") }}
                 {% elif reason == "lti_only" or reason == "lti_not_registered" %}
                     {{ _("This course must be accessed on an external platform. Read the course description or contact the teaching team for more information.") }}

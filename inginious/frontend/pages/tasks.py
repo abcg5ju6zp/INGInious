@@ -15,10 +15,11 @@ import time
 import flask
 
 from flask import current_app, session, redirect, Response, render_template
-from werkzeug.exceptions import NotFound, HTTPException
+from werkzeug.exceptions import NotFound, Forbidden, HTTPException
 
 from inginious.frontend.models import Submission
-from inginious.common.exceptions import TaskNotFoundException, CourseNotFoundException
+from inginious.common.exceptions import TaskNotFoundException, CourseNotFoundException, \
+    CourseOperationInProgressException
 from inginious.frontend.pages.course import handle_course_unavailable
 from inginious.frontend.pages.utils import INGIniousPage, INGIniousAuthPage
 from inginious.frontend.plugins import plugin_manager
@@ -415,7 +416,11 @@ class TaskPageStaticDownload(INGIniousPage):
                     return render_template("task_unavailable.html")
 
                 public_folder = task.get_fs().from_subfolder("public")
-            (method, mimetype_or_none, file_or_url) = public_folder.distribute(path_norm, False)
+            try:
+                with self.course_deletion_manager.operation_lock(courseid, "export", lease_seconds=60, heartbeat=15):
+                    (method, mimetype_or_none, file_or_url) = public_folder.distribute(path_norm, False)
+            except CourseOperationInProgressException as ex:
+                raise Forbidden(description=str(ex))
 
             if method == "local":
                 return Response(response=file_or_url, content_type=mimetype_or_none)

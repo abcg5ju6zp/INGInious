@@ -9,29 +9,16 @@ import random
 
 from flask import  request, redirect, render_template, session, url_for
 
-from inginious.frontend.models import Submission, Audience, UserTask, Group,  CourseClass
+from inginious.frontend.models import Submission, UserTask, Group, Audience, CourseClass
 from inginious.frontend.courses import Course
 from inginious.frontend.pages.course_admin.utils import INGIniousAdminPage
 from inginious.frontend.user_manager import UserManager
-from inginious.common.exceptions import CourseNotFoundException, CourseNotArchivable
+from inginious.common.exceptions import CourseNotArchivable, CourseOperationInProgressException
 
 
 class CourseDangerZonePage(INGIniousAdminPage):
-    """ Course administration page: list of audiences """
+    """ Course administration page: danger zone (archive and safe deletion) """
     _logger = logging.getLogger("inginious.webapp.danger_zone")
-
-    def wipe_course(self, courseid):
-        for submission in Submission.objects(courseid=courseid):
-            submission.input.delete()
-            submission.archive.delete()
-
-        CourseClass.objects(id=courseid).update(students=[])
-        Audience.objects(courseid=courseid).delete()
-        Group.objects(courseid=courseid).delete()
-        UserTask.objects(courseid=courseid).delete()
-        Submission.objects(courseid=courseid).delete()
-
-        self._logger.info("Course %s wiped.", courseid)
 
     def dump_course(self, course):
         """
@@ -72,16 +59,6 @@ class CourseDangerZonePage(INGIniousAdminPage):
         self._logger.info("Course %s archived as %s.", courseid, archive_course_id)
         return courseid, archive_course_id
 
-    def delete_course(self, course):
-        """ Erase all course data """
-        # Wipes the course (delete database)
-        self.wipe_course(course.get_id())
-
-        # Deletes the course from the factory (entire folder)
-        course.delete()
-
-        self._logger.info("Course %s files erased.", course.get_id())
-
     def GET_AUTH(self, courseid):  # pylint: disable=arguments-differ
         """ GET request """
         course, __ = self.get_course_and_check_rights(courseid, allow_all_staff=False)
@@ -93,19 +70,44 @@ class CourseDangerZonePage(INGIniousAdminPage):
 
         msg = ""
         error = False
-
         data = request.form
+
         if not data.get("token", "") == session.token:
             msg = _("Operation aborted due to invalid token.")
             error = True
-        elif "wipeall" in data:
+            return self.page(course, msg, error)
+
+        deletion = self.course_deletion_manager.get_deletion(courseid)
+
+        # A deletion is already in progress: the same request can only query or
+        # drive it forward, never start a second cleanup (nor archive anything).
+        if deletion is not None:
+            action = data.get("deletion_action", "")
+            if action == "continue_waiting":
+                self.course_deletion_manager.continue_waiting(courseid)
+            elif action == "isolate_plugin":
+                self.course_deletion_manager.isolate_plugin(courseid, data.get("plugin", ""))
+            elif action == "retry_fs":
+                self.course_deletion_manager.retry_fs(courseid)
+            self.course_deletion_manager.run_now(courseid)
+            if self.course_deletion_manager.get_deletion(courseid) is None:
+                return redirect(url_for("indexpage"))
+            return self.page(course)
+
+        if "wipeall" in data:
             if not data.get("courseid", "") == courseid:
                 msg = _("Wrong course id.")
                 error = True
             else:
                 try:
-                    courseid, archive_course_id = self.dump_course(course)
+                    self.require_course_writable(courseid)
+                    with self.course_deletion_manager.operation_lock(courseid, "archive",
+                                                                     lease_seconds=1800, heartbeat=30):
+                        courseid, archive_course_id = self.dump_course(course)
                     msg = _("Course archived as : ") + archive_course_id
+                except CourseOperationInProgressException as ex:
+                    msg = str(ex)
+                    error = True
                 except Exception as ex:
                     msg = _("An error occurred while dumping course from database: {}").format(repr(ex))
                     error = True
@@ -115,20 +117,55 @@ class CourseDangerZonePage(INGIniousAdminPage):
                 error = True
             else:
                 try:
-                    self.delete_course(course)
-                    return redirect(url_for("indexpage"))
+                    tombstone, __ = self.course_deletion_manager.request_deletion(course, session.username)
+                    # Fast path: a course without active references is fully deleted
+                    # within this request, preserving the previous UX. Otherwise the
+                    # background coordinator takes over and the status page tracks it.
+                    finalized = self.course_deletion_manager.run_now(courseid)
+                    if finalized:
+                        return redirect(url_for("indexpage"))
+                    msg = _("Course deletion started. It will finish in the background; see status below.")
+                except CourseOperationInProgressException as ex:
+                    msg = str(ex)
+                    error = True
                 except Exception as ex:
                     msg = _("An error occurred while deleting the course data: {}").format(repr(ex))
                     error = True
 
         return self.page(course, msg, error)
 
-
     def page(self, course, msg="", error=False):
         """ Get all data and display the page """
         thehash = UserManager.hash_password_sha512(str(random.getrandbits(256)))
         session.token = thehash
 
+        deletion = self.course_deletion_manager.get_deletion(course.get_id())
+        deletion_view = None
+        if deletion is not None:
+            deletion_view = self._build_deletion_view(deletion)
 
         return render_template("course_admin/danger_zone.html", course=course, thehash=thehash,
-                               msg=msg, error=error)
+                               msg=msg, error=error, deletion=deletion_view)
+
+    def _build_deletion_view(self, deletion):
+        """ Serializes a tombstone into a compact dict for the status panel. """
+        pins = {}
+        for name, pin in (deletion.pins or {}).items():
+            pins[name] = {"status": pin.status, "detail": pin.detail}
+        return {
+            "deletion_id": deletion.deletion_id,
+            "phase": deletion.phase,
+            "blocked": deletion.blocked,
+            "blocked_detail": deletion.blocked_detail or {},
+            "requested_by": deletion.requested_by,
+            "requested_at": deletion.requested_at,
+            "updated_at": deletion.updated_at,
+            "pins": pins,
+            "db_steps": deletion.db_steps or [],
+            "isolated_plugins": deletion.isolated_plugins or [],
+            "facts": deletion.facts or [],
+            "fs_attempts": deletion.fs_attempts or 0,
+            "fs_last_error": deletion.fs_last_error,
+            "refused_plugins": sorted(
+                (deletion.blocked_detail or {}).get("plugins", [])) if deletion.blocked == "plugin_refused" else []
+        }

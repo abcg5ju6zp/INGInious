@@ -186,6 +186,12 @@ def main():
         database.sessions.drop_indexes()
         db_version = 20
 
+    if db_version < 21:
+        print("Updating database to db_version 21")
+        database.course_deletions.create_index("deletion_id", unique=True)
+        database.course_deletions.create_index([("owner_id", pymongo.ASCENDING), ("lease_until", pymongo.ASCENDING)])
+        db_version = 21
+
     database.db_version.update_one({}, {"$set": {"db_version": db_version}}, upsert=True)
         
     print("Database up to date")

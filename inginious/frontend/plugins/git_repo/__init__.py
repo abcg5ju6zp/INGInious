@@ -48,6 +48,25 @@ class SubmissionGitSaver(threading.Thread):
         """ Add a new submission to the repo (add the to queue, will be saved async)"""
         self.queue.put((submission, submission["result"], submission["grade"], submission["problems"], submission["tests"], submission["custom"], archive))
 
+    def drain_course_deletion(self, courseid, **kwargs):
+        """ course_deletion_drain hook: cooperative drain of queued writes.
+
+        No new submission_done event reaches this plugin once the deletion gate
+        is up, so the in-memory queue only needs to flush its pending entries
+        for the course. Polled periodically by the deletion coordinator. """
+        pending = sum(1 for item in list(self.queue.queue) if item[0]["courseid"] == courseid)
+        if pending:
+            return {"plugin": "git_repo", "state": "pending",
+                    "message": "{} submission(s) still being saved".format(pending)}
+        return {"plugin": "git_repo", "state": "ready"}
+
+    def course_deleted(self, courseid, **kwargs):
+        """ course_deleted hook: remove the external on-disk repository subtree. """
+        course_repo = os.path.join(self.repopath, courseid)
+        if os.path.isdir(course_repo):
+            shutil.rmtree(course_repo, ignore_errors=True)
+            self._logger.info("Removed git repository subtree for deleted course %s", courseid)
+
     def run(self):
         while True:
             try:
@@ -109,3 +128,5 @@ def init(plugin_manager, client, config):
     submission_git_saver = SubmissionGitSaver(plugin_manager, config)
     submission_git_saver.daemon = True
     submission_git_saver.start()
+    plugin_manager.add_hook('course_deletion_drain', submission_git_saver.drain_course_deletion)
+    plugin_manager.add_hook('course_deleted', submission_git_saver.course_deleted)

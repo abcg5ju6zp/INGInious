@@ -36,6 +36,111 @@
     </div>
 {% endif %}
 
+{% if deletion %}
+<div class="card border-info mb-3">
+    <div class="card-header bg-info text-white">
+        <i class="fa fa-spinner fa-spin"></i> {{ _("Course deletion in progress") }}
+    </div>
+    <div class="card-body">
+        <p>{{ _("The course is read-only while it is being deleted: new submissions, edits, registrations and external launches are blocked. This page refreshes automatically.") }}</p>
+        <dl class="row mb-2">
+            <dt class="col-sm-3">{{ _("Deletion id") }}</dt>
+            <dd class="col-sm-9"><code>{{ deletion.deletion_id }}</code></dd>
+            <dt class="col-sm-3">{{ _("Phase") }}</dt>
+            <dd class="col-sm-9">{{ deletion.phase }}</dd>
+            <dt class="col-sm-3">{{ _("Requested by") }}</dt>
+            <dd class="col-sm-9">{{ deletion.requested_by }} &mdash; {{ deletion.requested_at.strftime("%Y-%m-%d %H:%M:%S") }}</dd>
+            {% if deletion.facts %}
+            <dt class="col-sm-3">{{ _("Recorded facts") }}</dt>
+            <dd class="col-sm-9">
+                {% for fact in deletion.facts %}
+                    <span class="badge badge-secondary mr-1">{{ fact }}</span>
+                {% endfor %}
+            </dd>
+            {% endif %}
+        </dl>
+
+        {% if deletion.blocked %}
+        <div class="alert alert-warning">
+            <p class="mb-2"><b>{{ _("The deletion is paused:") }}</b>
+                {% if deletion.blocked == "awaiting_jobs" %}
+                    {{ _("some grading jobs are still running. You can keep waiting; the deletion resumes automatically once they stop.") }}
+                    {% if deletion.blocked_detail.get("jobs") %}
+                        <br>{{ _("Remaining jobs:") }} <code>{{ deletion.blocked_detail.get("jobs") | join(", ") }}</code>
+                    {% endif %}
+                {% elif deletion.blocked == "plugin_refused" %}
+                    {{ _("a plugin did not release its references. You may isolate it and continue; its external data is kept.") }}
+                    {% if deletion.refused_plugins %}
+                        <br>{{ _("Plugins:") }} <code>{{ deletion.refused_plugins | join(", ") }}</code>
+                    {% endif %}
+                {% elif deletion.blocked == "fs_error" %}
+                    {{ _("the course directory could not be removed.") }}
+                    {% if deletion.fs_last_error %}<br><code>{{ deletion.fs_last_error }}</code>{% endif %}
+                {% endif %}
+            </p>
+            <form method="post" class="form-inline">
+                <input type="hidden" name="token" value="{{ thehash }}">
+                {% if deletion.blocked == "awaiting_jobs" %}
+                    <button type="submit" name="deletion_action" value="continue_waiting" class="btn btn-warning mr-2">
+                        <i class="fa fa-hourglass-half"></i> {{ _("Keep waiting") }}
+                    </button>
+                {% elif deletion.blocked == "plugin_refused" %}
+                    {% for plugin_name in deletion.refused_plugins %}
+                        <button type="submit" name="deletion_action" value="isolate_plugin"
+                                class="btn btn-warning mr-2"
+                                onclick="this.closest('form').elements['plugin'].value='{{ plugin_name }}';">
+                            <i class="fa fa-unlink"></i> {{ _("Isolate plugin {} and continue").format(plugin_name) }}
+                        </button>
+                    {% endfor %}
+                    <input type="hidden" name="plugin" value="">
+                {% elif deletion.blocked == "fs_error" %}
+                    <button type="submit" name="deletion_action" value="retry_fs" class="btn btn-warning mr-2">
+                        <i class="fa fa-repeat"></i> {{ _("Retry removing files") }}
+                    </button>
+                {% endif %}
+            </form>
+        </div>
+        {% endif %}
+
+        <h6>{{ _("Drain conclusions") }}</h6>
+        <table class="table table-sm table-bordered">
+            <thead><tr><th>{{ _("Reference holder") }}</th><th>{{ _("Status") }}</th><th>{{ _("Details") }}</th></tr></thead>
+            <tbody>
+            {% for name, pin in deletion.pins.items() %}
+                <tr>
+                    <td>{{ name }}</td>
+                    <td><span class="badge badge-{% if pin.status == 'done' %}success{% elif pin.status == 'skipped' %}secondary{% elif pin.status == 'blocked' %}danger{% else %}primary{% endif %}">{{ pin.status }}</span></td>
+                    <td style="word-break:break-all; font-size: 0.85rem;">
+                        {% if name == 'backend_jobs' %}
+                            {{ _("running: {}, queued: {}, waiting submissions: {}").format(pin.detail.get('running_count', 0), pin.detail.get('waiting_count', 0), pin.detail.get('waiting_submissions', 0)) }}
+                        {% elif name == 'db_refs' %}
+                            {{ _("submissions waiting: {}, class: {}, audiences: {}, groups: {}, user tasks: {}, users: {}").format(pin.detail.get('waiting_submissions', 0), pin.detail.get('course_class', 0), pin.detail.get('audiences', 0), pin.detail.get('groups', 0), pin.detail.get('user_tasks', 0), pin.detail.get('users', 0)) }}
+                        {% elif name == 'lti_queues' %}
+                            {{ _("LTI 1.1/1.3 grade pushback queues") }}
+                        {% elif name == 'plugins' and pin.detail.get('plugins') %}
+                            {% for pname, pinfo in pin.detail.get('plugins').items() %}
+                                <div><code>{{ pname }}</code>: {{ pinfo.state }} {% if pinfo.message %}&mdash; {{ pinfo.message }}{% endif %}</div>
+                            {% endfor %}
+                        {% else %}
+                            {{ pin.detail }}
+                        {% endif %}
+                    </td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+
+        {% if deletion.db_steps %}
+        <h6>{{ _("Completed database cleanup steps") }}</h6>
+        <p>{% for step in deletion.db_steps %}<span class="badge badge-success mr-1">{{ step }}</span>{% endfor %}</p>
+        {% endif %}
+        {% if deletion.fs_attempts %}
+        <p class="mb-0 text-muted">{{ _("Filesystem removal attempts: {}").format(deletion.fs_attempts) }}</p>
+        {% endif %}
+    </div>
+</div>
+<script>setTimeout(function(){ window.location.reload(); }, 5000);</script>
+{% else %}
 <div class="card">
     <div class="card-header">
         <ul class="nav nav-tabs card-header-tabs" role="tablist">
@@ -118,4 +223,5 @@
         </div>
     </div>
 </div>
+{% endif %}
 {% endblock %}

@@ -5,6 +5,7 @@
 
 import importlib
 import os
+import threading
 
 from wsgidav import util, wsgidav_app
 from wsgidav.dav_error import DAVError, HTTP_NOT_FOUND, HTTP_FORBIDDEN
@@ -17,6 +18,7 @@ from inginious.common.filesystems import init_fs_provider
 from inginious.common.filesystems.local import LocalFSProvider
 from inginious.frontend.user_manager import UserManager
 from inginious.frontend.courses import Course
+from inginious.frontend.course_deletion_gate import is_course_draining
 
 from inginious.common.tasks_problems import register_problem_types
 from inginious.frontend.task_problems import get_default_displayable_problem_types
@@ -137,6 +139,12 @@ class INGIniousDAVCourseFile(FileResource):
 
 class INGIniousFilesystemProvider(DAVProvider):
     """ A DAVProvider adapted to the structure of INGInious """
+
+    # wsgidav only asks the provider a global is_readonly(); the path of the
+    # current request is stored per thread in get_resource_inst() so that a
+    # course being deleted can be served read-only while others stay writable.
+    _current_path = threading.local()
+
     def __init__(self):
         super(INGIniousFilesystemProvider, self).__init__()
         self.readonly = False
@@ -177,7 +185,18 @@ class INGIniousFilesystemProvider(DAVProvider):
         return file_path
 
     def is_readonly(self):
-        return False
+        """ Courses being deleted are exposed read-only; reads stay available. """
+        path = getattr(self._current_path, "path", None)
+        if path is None:
+            return False
+        try:
+            courseid = self._get_course_id(path)
+        except RuntimeError:
+            return False
+        try:
+            return is_course_draining(courseid)
+        except Exception:
+            return False
 
     def get_resource_inst(self, path, environ):
         """Return info dictionary for path.
@@ -185,6 +204,7 @@ class INGIniousFilesystemProvider(DAVProvider):
         See DAVProvider.getResourceInst()
         """
         self._count_get_resource_inst += 1
+        self._current_path.path = path
         fp = self._loc_to_file_path(path)
         if not os.path.exists(fp):
             return None

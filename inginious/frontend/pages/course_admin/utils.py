@@ -13,7 +13,9 @@ from collections import OrderedDict
 from flask import  session, redirect, Response, url_for
 from werkzeug.exceptions import Forbidden
 
+from inginious.common.exceptions import CourseDrainingException
 from inginious.frontend.courses import Course
+from inginious.frontend.course_deletion_gate import assert_course_writable
 from inginious.frontend.pages.utils import INGIniousAuthPage
 
 
@@ -21,6 +23,13 @@ class INGIniousAdminPage(INGIniousAuthPage):
     """
     An improved version of INGIniousAuthPage that checks rights for the administration
     """
+
+    def require_course_writable(self, courseid):
+        """ Raise 403 when the course is being deleted (write gate). """
+        try:
+            assert_course_writable(courseid)
+        except CourseDrainingException as e:
+            raise Forbidden(description=str(e))
 
     def get_course_and_check_rights(self, courseid, taskid=None, allow_all_staff=True):
         """ Returns the course with id ``courseid`` and the task with id ``taskid``, and verify the rights of the user.

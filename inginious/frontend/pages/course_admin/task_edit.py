@@ -63,7 +63,8 @@ class CourseEditTask(INGIniousAdminPage):
         if not id_checker(taskid) or not id_checker(courseid):
             raise NotFound(description=_("Invalid course/task id"))
 
-        __, __ = self.get_course_and_check_rights(courseid, allow_all_staff=False)
+        course, __ = self.get_course_and_check_rights(courseid, allow_all_staff=False)
+        self.require_course_writable(courseid)
         data = flask.request.form.copy()
 
         # Parse content

@@ -8,6 +8,7 @@ from mongoengine import Document, IntField
 from inginious import DB_VERSION
 from inginious.frontend.models.audience import Audience
 from inginious.frontend.models.course_class import CourseClass
+from inginious.frontend.models.course_deletion import CourseDeletion, CourseOperationLock, DrainPin
 from inginious.frontend.models.group import Group
 from inginious.frontend.models.lti1_1 import LISOutcome, Nonce
 from inginious.frontend.models.lti1_3 import LTIGrade, LaunchData

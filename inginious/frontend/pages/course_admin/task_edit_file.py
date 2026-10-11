@@ -8,9 +8,10 @@ import json
 import os.path
 
 from flask import request, redirect, Response, render_template
-from werkzeug.exceptions import  NotFound
+from werkzeug.exceptions import  NotFound, Forbidden
 
 from inginious.common.base import id_checker
+from inginious.common.exceptions import CourseOperationInProgressException
 from inginious.frontend.pages.course_admin.utils import INGIniousAdminPage
 
 
@@ -45,6 +46,7 @@ class CourseTaskFiles(INGIniousAdminPage):
             raise NotFound(description=_("Invalid task id"))
 
         course, task = self.get_course_and_check_rights(courseid, taskid=taskid, allow_all_staff=False)
+        self.require_course_writable(courseid)
         task_fs = task.get_fs()
 
         user_input = request.form.copy()
@@ -236,7 +238,11 @@ class CourseTaskFiles(INGIniousAdminPage):
         if wanted_path is None:
             raise NotFound(description=_("This path doesn't exist."))
 
-        (method, mimetype_or_none, file_or_url) = task_fs.distribute(wanted_path)
+        try:
+            with self.course_deletion_manager.operation_lock(course.get_id(), "export", lease_seconds=60, heartbeat=15):
+                (method, mimetype_or_none, file_or_url) = task_fs.distribute(wanted_path)
+        except CourseOperationInProgressException as ex:
+            raise Forbidden(description=str(ex))
 
         if method == "local":
             return Response(response=file_or_url, content_type=mimetype_or_none)

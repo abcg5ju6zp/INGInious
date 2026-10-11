@@ -13,6 +13,8 @@ from typing import Type
 from abc import ABCMeta, abstractmethod
 from mongoengine import Document
 
+from inginious.frontend.course_deletion_gate import is_course_draining
+
 
 class LTIScorePublisher(threading.Thread, metaclass=ABCMeta):
     _submission_tags = {}
@@ -41,24 +43,43 @@ class LTIScorePublisher(threading.Thread, metaclass=ABCMeta):
                 data = self._queue.get()
 
                 try:
-                    grade = self._user_manager.get_task_cache(data["username"], data["courseid"], data["taskid"])["grade"]
+                    # The course is being deleted: pending grade pushbacks target
+                    # data that is about to disappear and must not trigger any
+                    # Course.get lookup. Drop them directly.
+                    try:
+                        if is_course_draining(data["courseid"]):
+                            data.delete()
+                            continue
+                    except Exception:
+                        self._logger.exception("Could not check the deletion state of course %s", data.get("courseid"))
+
+                    try:
+                        grade = self._user_manager.get_task_cache(data["username"], data["courseid"], data["taskid"])["grade"]
+                    except Exception:
+                        # A single unreadable entry must never kill the whole
+                        # publisher thread (which would block grade pushback
+                        # for every other course): count it as a failed attempt.
+                        self._logger.error("An exception occurred while getting a course/LTI secret/grade.", exc_info=True)
+                        success = False
+                    else:
+                        success = self.process(data, grade)
+
+                    if success:
+                        data.delete()
+                        self._logger.debug("Successfully sent grade to TC: %s", str(data.to_mongo().to_dict()))
+                        continue
+
+                    if data["nb_attempt"] < 5:
+                        self._logger.debug("An error occurred while sending a grade to the TC. Retrying...")
+                        data.nb_attempt += 1
+                        data.save()
+                        self._queue.put(data)
+                    else:
+                        self._logger.error("An error occurred while sending a grade to the TC. Maximum number of retries reached.")
+                        data.delete()
                 except Exception:
-                    self._logger.error("An exception occurred while getting a course/LTI secret/grade.", exc_info=True)
-                    return False
-
-                if self.process(data, grade):
-                    data.delete()
-                    self._logger.debug("Successfully sent grade to TC: %s", str(data.to_mongo().to_dict()))
-                    continue
-
-                if data["nb_attempt"] < 5:
-                    self._logger.debug("An error occurred while sending a grade to the TC. Retrying...")
-                    data.nb_attempt += 1
-                    data.save()
-                    self._queue.put(data)
-                else:
-                    self._logger.error("An error occurred while sending a grade to the TC. Maximum number of retries reached.")
-                    data.delete()
+                    # Never let an unexpected error terminate the thread.
+                    self._logger.exception("Failure while handling an LTI grade pushback entry.")
         except KeyboardInterrupt:
             pass
 
@@ -70,6 +91,12 @@ class LTIScorePublisher(threading.Thread, metaclass=ABCMeta):
         """ Add a job in the queue
         :param submission: the submission dict
         """
+        try:
+            if is_course_draining(submission["courseid"]):
+                return
+        except Exception:
+            self._logger.exception("Could not check the deletion state before queueing an LTI grade pushback.")
+
         for tag in self._submission_tags.keys():
             if tag not in submission:
                 return

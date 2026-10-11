@@ -72,6 +72,11 @@ class INGIniousPage(MethodView):
         return current_app.client
 
     @property
+    def course_deletion_manager(self):
+        """ Returns the course deletion manager singleton """
+        return current_app.course_deletion_manager
+
+    @property
     def logger(self) -> logging.Logger:
         """ Logger """
         return logging.getLogger('inginious.webapp.pages')

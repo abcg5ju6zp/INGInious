@@ -9,6 +9,7 @@ import base64
 import flask
 
 from flask import current_app, session
+from inginious.common.exceptions import CourseDrainingException
 from inginious.frontend.courses import Course
 from inginious.frontend.pages.api._api_page import APIAuthenticatedPage, APINotFound, APIForbidden, APIInvalidArguments, APIError
 
@@ -214,5 +215,7 @@ class APISubmissions(APIAuthenticatedPage):
         try:
             submissionid, _ = self.submission_manager.add_job(course, task, user_input, course.get_task_dispenser(), username, debug)
             return 200, {"submissionid": str(submissionid)}
+        except CourseDrainingException as ex:
+            raise APIForbidden(str(ex))
         except Exception as ex:
             raise APIError(500, str(ex))

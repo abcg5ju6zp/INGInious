@@ -7,6 +7,7 @@
 from flask import session
 
 from inginious.frontend.courses import Course
+from inginious.frontend.course_deletion_gate import is_course_draining
 from inginious.frontend.pages.api._api_page import APIAuthenticatedPage, APINotFound
 
 
@@ -58,7 +59,8 @@ class APICourses(APIAuthenticatedPage):
         user_info = self.user_manager.get_user_info(username)
 
         for courseid, course in courses.items():
-            if self.user_manager.course_is_open_to_user(course, username, False) or course.is_registration_possible(user_info):
+            if not is_course_draining(courseid) and \
+                    (self.user_manager.course_is_open_to_user(course, username, False) or course.is_registration_possible(user_info)):
                 data = {
                     "id": courseid,
                     "name": course.get_name(session.language),

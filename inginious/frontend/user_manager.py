@@ -23,6 +23,7 @@ from argon2.exceptions import VerifyMismatchError
 from mongoengine import Q
 
 from inginious.frontend.models import User, Group, Audience, CourseClass, UserTask, Submission
+from inginious.frontend.course_deletion_gate import is_course_draining, assert_course_writable
 
 class AuthInvalidInputException(Exception):
     pass
@@ -490,6 +491,9 @@ class UserManager:
 
     def user_saw_task(self, username, courseid, taskid):
         """ Set in the database that the user has viewed this task """
+        if is_course_draining(courseid):
+            # Do not upsert user_tasks for a course that is being deleted.
+            return
         UserTask.objects(username=username, courseid=courseid, taskid=taskid).update_one(
             set_on_insert__username=username,
             set_on_insert__courseid=courseid,
@@ -657,6 +661,8 @@ class UserManager:
         if not user_info:
             return False
 
+        assert_course_writable(course.get_id())
+
         if not force:
             if not course.is_registration_possible(user_info):
                 return False
@@ -717,6 +723,11 @@ class UserManager:
 
         if self.has_staff_rights_on_course(course, username):
             return True
+
+        if is_course_draining(course.get_id()):
+            # The course is being deleted: staff keeps read-only access above,
+            # everyone else is presented the "deleting" unavailability page.
+            return False if not return_reason else "deleting"
 
         if not course.get_accessibility().is_open():
             return False if not return_reason else "closed"

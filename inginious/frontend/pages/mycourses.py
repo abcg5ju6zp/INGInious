@@ -7,6 +7,7 @@
 from collections import OrderedDict
 from flask import session, request, render_template, url_for
 from inginious.frontend.courses import Course
+from inginious.frontend.course_deletion_gate import is_course_draining
 from inginious.frontend.pages.utils import INGIniousAuthPage
 
 
@@ -84,6 +85,7 @@ class MyCoursesPage(INGIniousAuthPage):
 
         registerable_courses = {courseid: course for courseid, course in all_courses.items() if
                                 not self.user_manager.course_is_user_registered(course, username) and
+                                not is_course_draining(courseid) and
                                 course.is_registration_possible(user_info)}
 
         registerable_courses = OrderedDict(sorted(iter(registerable_courses.items()), key=lambda x: x[1].get_name(session.language)))

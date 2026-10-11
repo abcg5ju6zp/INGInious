@@ -19,6 +19,7 @@ from inginious.frontend.pages.utils import INGIniousPage, INGIniousAuthPage
 from inginious.frontend.pages.tasks import BaseTaskPage
 from inginious.frontend.pages.lti import LTIBindPage, LTILoginPage
 from inginious.frontend.courses import Course
+from inginious.frontend.course_deletion_gate import is_course_draining
 
 from inginious.frontend.models import Nonce, LTIData
 
@@ -95,6 +96,8 @@ class LTI11TaskPage(INGIniousAuthPage):
     def fetch_lti_data(self):
         if (data := session.lti) is None:
             raise Forbidden(description=_("No LTI data available."))
+        if is_course_draining(data['task'][0]):
+            raise Forbidden(description=_("This course is being deleted; LTI access is closed."))
         return data['task']
 
     def GET_AUTH(self):
@@ -123,6 +126,9 @@ class LTI11LaunchPage(INGIniousPage):
             course = Course.get(courseid)
         except exceptions.CourseNotFoundException as ex:
             raise NotFound(description=_(str(ex)))
+
+        if is_course_draining(courseid):
+            raise Forbidden(description=_("This course is being deleted; LTI launches are closed."))
 
         try:
             test = LTIFlaskToolProvider.from_flask_request()
